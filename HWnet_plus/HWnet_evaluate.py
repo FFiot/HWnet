@@ -19,22 +19,21 @@ import pandas as pd
 EVALUATE_IDX = 0
 MIN_IDX = 1
 MAX_IDX = 2
-TAKECARE_IDX = 3
-CNT_IDX = 4
-LOS_IDX = 5
-VECTOR_IDX = 6
-DF_DOLUMN_LIST = ['value', 'min', 'max', 'takecare', 'cnt', 'loss']
+CNT_IDX = 3
+LOS_IDX = 4
+VECTOR_IDX = 5
+DF_DOLUMN_LIST = ['value', 'min', 'max', 'cnt', 'loss']
 
 def _vector_init(vecor_dims):
     return np.random.randn(vecor_dims).astype(np.float32)/16
 
-def takecare_cal(distance, distance_base=0.083, takecare_base=318):
-    return takecare_base / ((distance/distance_base)**2)
+def takecare_cal(takecare, distance_base=0.083, takecare_base=318):
+    return takecare_base / (1.0/distance_base)**2
 
 class HWnet_evaluate():
-    def __init__(self, base_wide, edge_size=2, vector_dims=1, vector_init=None):
+    def __init__(self, base_wide, takecare=0.8, edge_size=2, vector_dims=1, vector_init=None):
         self.base_wide = base_wide
-        self.takecare = takecare_cal(base_wide)
+        self.takecare = takecare
         self.edge_size = edge_size
         self.vector_dims = vector_dims
         self.vecotr_init = _vector_init if vector_init is None else vector_init
@@ -45,7 +44,7 @@ class HWnet_evaluate():
         x_min = x//self.base_wide*self.base_wide
         x = x_min + 0.5 * self.base_wide
         x_max = x_min + self.base_wide
-        return np.concatenate([[x, x_min, x_max, self.takecare, trained_cnt, 0], self.vecotr_init(self.vector_dims)])
+        return np.concatenate([[x, x_min, x_max, trained_cnt, 0], self.vecotr_init(self.vector_dims)])
 
     def push(self, x):
         if self.evaluate_table is None:
@@ -100,11 +99,11 @@ class HWnet_evaluate():
 
     def get_parameter(self):
         p = {}
+        p['takecare'] = takecare_cal(1.0)
         p['edge_size'] = self.edge_size
         p['evaluate_table'] = self.get_column(EVALUATE_IDX)
         p['evaluate_min_table'] = self.get_column(MIN_IDX)
         p['evaluate_max_table'] = self.get_column(MAX_IDX)
-        p['takecare_table'] = self.get_column(TAKECARE_IDX)
         p['vector_table'] = self.get_column(VECTOR_IDX, self.vector_dims)
         return p
 
@@ -133,17 +132,16 @@ class HWnet_evaluate():
             evaluate_min = row[MIN_IDX] + wide * (i)
             evaluate_value = evaluate_min + wide/2
             evaluate_max = evaluate_min + wide
-            takecare = row[TAKECARE_IDX] * (div**2)
             vector = row[VECTOR_IDX:VECTOR_IDX + self.vector_dims]
             vector = vector + self.vecotr_init(self.vector_dims)/16
-            row_new = np.array([evaluate_value, evaluate_min, evaluate_max, takecare, 0, 0])
+            row_new = np.array([evaluate_value, evaluate_min, evaluate_max, 0, 0])
             row_new = np.append(row_new, vector)
             row_new = np.expand_dims(row_new, axis=0)
             row_list.append(row_new)
         evaluate_table = np.concatenate(row_list)
         return evaluate_table
 
-    def evaluate_split(self, loss_target=0.01, min_wide=0.01, min_num=20, div=2):
+    def evaluate_split(self, loss_target=0.5, min_wide=0.01, min_num=20, div=2):
         cnt_sum = self.evaluate_table[:, CNT_IDX].sum()
         evaluate_table = []
         for row in self.evaluate_table:
@@ -155,7 +153,7 @@ class HWnet_evaluate():
                 evaluate_new = np.expand_dims(row.copy(), axis=0)
             elif wide <= min_wide:
                 evaluate_new = np.expand_dims(row.copy(), axis=0)
-            elif loss_mean <= loss_target:
+            elif loss_sum <= loss_target:
                 evaluate_new = np.expand_dims(row.copy(), axis=0)
             else:
                 evaluate_new = self.row_split(row, 2)
@@ -193,7 +191,7 @@ if __name__ == "__main__":
 
         predict = model(data_train)
 
-        # plt_scatter(data_train, y_predict=predict, y_true=target_train)
+        plt_scatter(data_train, y_predict=predict, y_true=target_train)
         
         loss = (predict - target_train)
         loss = np.abs(loss)

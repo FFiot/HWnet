@@ -19,6 +19,9 @@ import torch
 import torch.nn as nn
 import torch.backends.cudnn as cudnn
 
+def takecare_cal(distance, distance_base=0.083, takecare_base=318):
+    return takecare_base / ((distance/distance_base)**2)
+
 class HWnet_plus(nn.Module):
     def __init__(self, parameters):
         super(HWnet_plus, self).__init__()
@@ -32,6 +35,8 @@ class HWnet_plus(nn.Module):
         self.evaluate_max_table = torch.from_numpy(parameters['evaluate_max_table']).float()
         self.evaluate_max_table = nn.Embedding.from_pretrained(self.evaluate_max_table, freeze=True)
 
+        self.takecare = parameters['takecare']
+
         self.edge_size = parameters['edge_size']
 
         self.idx_min = self.edge_size
@@ -40,20 +45,15 @@ class HWnet_plus(nn.Module):
         self.idx_table = torch.from_numpy(np.arange(-self.edge_size, self.edge_size+1)).int()
         self.idx_table = nn.Parameter(self.idx_table, requires_grad=False)
 
-        self.takecare_table = torch.from_numpy(parameters['takecare_table']).float()
-        self.takecare_table = nn.Embedding.from_pretrained(self.takecare_table, freeze=True)
-
         self.vector_table = torch.from_numpy(parameters['vector_table']).float()
         self.vector_table = nn.Embedding.from_pretrained(self.vector_table, freeze=False)
 
     def get(self):
         evaluate_table = self.evaluate_table.weight.detach().cpu().numpy()
         vector_table = self.vector_table.weight.detach().cpu().numpy()
-        takecare_table = self.takecare_table.weight.detach().cpu().numpy()
         return {'evaluate_table':evaluate_table, 
                 'edge_size':self.edge_size,
-                'vector_table':vector_table, 
-                'takecare_table':takecare_table}
+                'vector_table':vector_table}
 
     def forward(self, x):
         x = x.unsqueeze(-1)
@@ -65,40 +65,23 @@ class HWnet_plus(nn.Module):
         idx = torch.argmax(idx, dim=-2)
         # clamp
         idx_clamp = idx.clamp(self.idx_min, self.idx_max)
-        if True:
-            idx_offset = (idx_clamp - idx + self.idx_table).float()
-            # distance
-            evaluate_table = self.evaluate_table(idx)
-            distance = x - evaluate_table
-            evaluate_wide = self.evaluate_max_table(idx) - self.evaluate_min_table(idx)
-            distance = distance / evaluate_wide
-            distance = distance - idx_offset.unsqueeze(-1)
-            # takecare
-            takecare = 2.1
-            # score
-            score = distance**2 * -1.0 * takecare
-            score = torch.softmax(score, dim=-2)
-            # vecotr
-            idx_table = idx_clamp +  self.idx_table
-            vector_table = self.vector_table(idx_table)
-            vector_output = vector_table * score
-            vector_output = vector_output.sum(dim=-2)
-            return vector_output
-        else:
-            idx_table = idx_clamp +  self.idx_table
-            # distance
-            evaluate_table = self.evaluate_table(idx_table)
-            distance = (x-evaluate_table)**2
-            # takecare
-            takecare = self.takecare_table(idx)
-            # score
-            score = distance * -1.0 * takecare
-            score = torch.softmax(score, dim=-2)
-            # vector
-            vector_table = self.vector_table(idx_table)
-            vector_output = vector_table * score
-            vector_output = vector_output.sum(dim=-2)
-            return vector_output
+        # idx
+        idx_offset = (idx_clamp - idx + self.idx_table).float()
+        # distance
+        evaluate_table = self.evaluate_table(idx)
+        distance = x - evaluate_table
+        evaluate_wide = self.evaluate_max_table(idx) - self.evaluate_min_table(idx)
+        distance = distance / evaluate_wide
+        distance = distance - idx_offset.unsqueeze(-1)
+        # score
+        score = distance**2 * -1.0 * self.takecare
+        score = torch.softmax(score, dim=-2)
+        # vecotr
+        idx_table = idx_clamp +  self.idx_table
+        vector_table = self.vector_table(idx_table)
+        vector_output = vector_table * score
+        vector_output = vector_output.sum(dim=-2)
+        return vector_output
 
 from HWnet_evaluate import HWnet_evaluate
 

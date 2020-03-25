@@ -33,10 +33,10 @@ class HWnet_plus(keras.layers.Layer):
         self.idx_min = self.edge_size
         self.idx_max = len(self.parameters['evaluate_table']) - self.edge_size - 1
         
+        self.takecare = self.parameters['takecare']
+
         self.idx_table = np.arange(-self.edge_size, self.edge_size+1, dtype=np.int64)
         self.idx_table = K.variable(value=self.idx_table, dtype='int64', name='idx_table')
-
-        self.takecare_table = K.variable(self.parameters['takecare_table'], dtype='float32', name='takecare_table')
 
         self.vector_table = K.variable(self.parameters['vector_table'], dtype='float32',name='vector_table')
         
@@ -48,7 +48,6 @@ class HWnet_plus(keras.layers.Layer):
         self._non_trainable_weights.append(self.evaluate_min_table)
         self._non_trainable_weights.append(self.evaluate_max_table)
         self._non_trainable_weights.append(self.idx_table)
-        self._non_trainable_weights.append(self.takecare_table)
 
         super(HWnet_plus, self).build(input_shape)
 
@@ -62,41 +61,24 @@ class HWnet_plus(keras.layers.Layer):
         idx = tf.argmax(idx, axis=-2)
         # clip
         idx_clip = tf.clip_by_value(idx, self.idx_min, self.idx_max)
-        if True:
-            idx_offset = idx_clip - idx + self.idx_table
-            idx_offset = tf.cast(idx_offset, tf.float32)
-            # distance
-            evaluate_table = tf.nn.embedding_lookup(self.evaluate_table, idx)
-            distance = x - evaluate_table
-            evaluate_wide = tf.nn.embedding_lookup(self.evaluate_max_table, idx) - tf.nn.embedding_lookup(self.evaluate_min_table, idx)
-            distance = distance / evaluate_wide
-            distance = distance - tf.expand_dims(idx_offset, axis=-1)
-            # takecare
-            takecare = 1.0
-            # score
-            score = distance**2 * -1.0 * takecare
-            score = tf.nn.softmax(score, axis=-2)
-            # vecotr
-            idx_table = idx_clip +  self.idx_table
-            vector_table = tf.nn.embedding_lookup(self.vector_table, idx_table)
-            vector_output = vector_table * score
-            vector_output = tf.reduce_sum(vector_output, axis=-2)
-            return vector_output
-        else:
-            idx_table = idx_clip + self.idx_table
-            # distance
-            evaluate_tabel = tf.nn.embedding_lookup(self.evaluate_table, idx_table)
-            distance = (x-evaluate_tabel)**2
-            # takecare
-            takecare = tf.nn.embedding_lookup(self.takecare_table, idx)
-            # score
-            score = distance * -1.0 * takecare
-            score = tf.nn.softmax(score, axis=-2)
-            # vector
-            vector_table = tf.nn.embedding_lookup(self.vector_table, idx_table)
-            vector_output = vector_table * score
-            vector_output = tf.reduce_sum(vector_output, axis=-2)
-            return vector_output
+        # offset
+        idx_offset = idx_clip - idx + self.idx_table
+        idx_offset = tf.cast(idx_offset, tf.float32)
+        # distance
+        evaluate_table = tf.nn.embedding_lookup(self.evaluate_table, idx)
+        distance = x - evaluate_table
+        evaluate_wide = tf.nn.embedding_lookup(self.evaluate_max_table, idx) - tf.nn.embedding_lookup(self.evaluate_min_table, idx)
+        distance = distance / evaluate_wide
+        distance = distance - tf.expand_dims(idx_offset, axis=-1)
+        # score
+        score = distance**2 * -1.0 * self.takecare
+        score = tf.nn.softmax(score, axis=-2)
+        # vecotr
+        idx_table = idx_clip +  self.idx_table
+        vector_table = tf.nn.embedding_lookup(self.vector_table, idx_table)
+        vector_output = vector_table * score
+        vector_output = tf.reduce_sum(vector_output, axis=-2)
+        return vector_output
 
     def get_vector(self):
         return self.vector_table.numpy()
