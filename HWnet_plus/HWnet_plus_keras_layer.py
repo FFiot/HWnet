@@ -72,7 +72,7 @@ class HWnet_plus(keras.layers.Layer):
             distance = distance / evaluate_wide
             distance = distance - tf.expand_dims(idx_offset, axis=-1)
             # takecare
-            takecare = 2.1
+            takecare = 1.0
             # score
             score = distance**2 * -1.0 * takecare
             score = tf.nn.softmax(score, axis=-2)
@@ -97,6 +97,9 @@ class HWnet_plus(keras.layers.Layer):
             vector_output = vector_table * score
             vector_output = tf.reduce_sum(vector_output, axis=-2)
             return vector_output
+
+    def get_vector(self):
+        return self.vector_table.numpy()
 
 from HWnet_evaluate import HWnet_evaluate
 

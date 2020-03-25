@@ -79,7 +79,9 @@ class HWnet_evaluate():
             return False, idx
         
         if idx_list.shape[0] > 1:
-            pass
+            idx = idx_list[0]
+            self.evaluate_table[idx, CNT_IDX] += 1
+            return False, idx
 
     def push_array(self, array):
         idx_list = np.array([]).astype(np.int)
@@ -93,6 +95,9 @@ class HWnet_evaluate():
     def get_column(self, column, size=1):
         return self.evaluate_table[:, column:column+size]
 
+    def set_column(self, array, column, size=1):
+         self.evaluate_table[:, column:column+size] = array
+
     def get_parameter(self):
         p = {}
         p['edge_size'] = self.edge_size
@@ -103,18 +108,97 @@ class HWnet_evaluate():
         p['vector_table'] = self.get_column(VECTOR_IDX, self.vector_dims)
         return p
 
+    def get_vector(self):
+        return self.get_column(VECTOR_IDX, self.vector_dims)
+
+    def set_vector(self, array):
+        self.set_column(array, VECTOR_IDX, self.vector_dims)
+
     def dataFrame(self):
         return pd.DataFrame(self.evaluate_table, columns=self.df_column_list)
 
+    def feed_loss(self, idx, loss):
+        self.evaluate_table[:, LOS_IDX] = 0
+        for i, l in zip(idx, loss):
+            self.evaluate_table[i, LOS_IDX] += l
+
+# 分割条件:
+# 1. 静态：最小距离， 最小参数个数， 最小误差(平均或者总和)
+# 2. 动态：分裂后，损失函数是否减少。
+# 损失类型：绝对值差，AUC等等
+    def row_split(self, row, div=2):
+        wide = (row[MAX_IDX] - row[MIN_IDX]) / div
+        row_list = []
+        for i in range(div):
+            evaluate_min = row[MIN_IDX] + wide * (i)
+            evaluate_value = evaluate_min + wide/2
+            evaluate_max = evaluate_min + wide
+            takecare = row[TAKECARE_IDX] * (div**2)
+            vector = row[VECTOR_IDX:VECTOR_IDX + self.vector_dims]
+            vector = vector + self.vecotr_init(self.vector_dims)/16
+            row_new = np.array([evaluate_value, evaluate_min, evaluate_max, takecare, 0, 0])
+            row_new = np.append(row_new, vector)
+            row_new = np.expand_dims(row_new, axis=0)
+            row_list.append(row_new)
+        evaluate_table = np.concatenate(row_list)
+        return evaluate_table
+
+    def evaluate_split(self, loss_target=0.01, min_wide=0.01, min_num=20, div=2):
+        cnt_sum = self.evaluate_table[:, CNT_IDX].sum()
+        evaluate_table = []
+        for row in self.evaluate_table:
+            cnt = row[CNT_IDX]
+            wide = row[MAX_IDX] - row[MIN_IDX]
+            loss_sum = row[LOS_IDX]
+            loss_mean = 0 if cnt==0 else loss_sum/cnt
+            if cnt <= min_num:
+                evaluate_new = np.expand_dims(row.copy(), axis=0)
+            elif wide <= min_wide:
+                evaluate_new = np.expand_dims(row.copy(), axis=0)
+            elif loss_mean <= loss_target:
+                evaluate_new = np.expand_dims(row.copy(), axis=0)
+            else:
+                evaluate_new = self.row_split(row, 2)
+            evaluate_new[:, CNT_IDX] = 0
+            evaluate_new[:, LOS_IDX] = 0
+            evaluate_table.append(evaluate_new)
+        self.evaluate_table = np.concatenate(evaluate_table)
+
+import sys
+sys.path.append('./HWnet_base')
+from util import plt_scatter
+from HWnet_plus_keras_layer import HWnet_plus
+
+import tensorflow as tf
+import tensorflow.keras as keras
+
 if __name__ == "__main__":
-    net = HWnet_evaluate(0.1)
+    def test_fucntion(x):
+        return np.sin(x**2 * np.pi * 2)/2 - (x)**2 + 0.5
+    
+    data_train = (np.random.random(4096).astype(np.float32).reshape((-1,1)) - 0.5)*2
+    # data_train = np.linspace(-1.0, 1.0, 101).astype(np.float32).reshape((-1,1))
+    target_train = test_fucntion(data_train).reshape((-1,1))
+    # plt_scatter(data_train,y_true=target_train)
 
-    # data = np.arange(0.0, 10.0, step=1.0)/1000/2
-    # np.random.shuffle(data)
-    # print(data)
-    np.random.seed(0)
-    data = np.random.random(1000)
+    evaluate = HWnet_evaluate(0.2)
 
-    idx = net.push_array(data)
+    for epotch in range(10):
+        idx = evaluate.push_array(data_train[:, 0])
 
-    print(net.get_parameter())
+        model = keras.Sequential([HWnet_plus(evaluate.get_parameter())])
+        model.compile(optimizer=keras.optimizers.Adam(learning_rate=0.01), loss=tf.keras.losses.Huber())
+        his = model.fit(data_train, target_train, batch_size=128, epochs=100, verbose=0)
+        print(epotch, his.history['loss'][-1])
+
+        predict = model(data_train)
+
+        # plt_scatter(data_train, y_predict=predict, y_true=target_train)
+        
+        loss = (predict - target_train)
+        loss = np.abs(loss)
+        
+        evaluate.feed_loss(idx, loss)
+        print(evaluate.dataFrame())
+
+        evaluate.evaluate_split()
