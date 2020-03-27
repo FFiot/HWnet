@@ -142,13 +142,11 @@ class HWnet_evaluate():
         return evaluate_table
 
     def evaluate_split(self, loss_target=0.5, min_wide=0.01, min_num=20, div=2):
-        cnt_sum = self.evaluate_table[:, CNT_IDX].sum()
         evaluate_table = []
         for row in self.evaluate_table:
             cnt = row[CNT_IDX]
             wide = row[MAX_IDX] - row[MIN_IDX]
             loss_sum = row[LOS_IDX]
-            loss_mean = 0 if cnt==0 else loss_sum/cnt
             if cnt <= min_num:
                 evaluate_new = np.expand_dims(row.copy(), axis=0)
             elif wide <= min_wide:
